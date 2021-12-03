@@ -22,6 +22,7 @@
 #              17) http://u88.n24.queensu.ca/exiftool/forum/index.php/topic,4922.0.html
 #              18) Thomas Modes private communication (G6)
 #              19) http://u88.n24.queensu.ca/exiftool/forum/index.php/topic,5533.0.html
+#              20) Bernd-Michael Kemper private communication (DMC-GX80/85)
 #              JD) Jens Duttke private communication (TZ3,FZ30,FZ50)
 #------------------------------------------------------------------------------
 
@@ -32,7 +33,7 @@ use vars qw($VERSION %leicaLensTypes);
 use Image::ExifTool qw(:DataAccess :Utils);
 use Image::ExifTool::Exif;
 
-$VERSION = '1.87';
+$VERSION = '1.94';
 
 sub ProcessLeicaLEIC($$$);
 sub WhiteBalanceConv($;$$);
@@ -119,6 +120,7 @@ sub WhiteBalanceConv($;$$);
     '51 2' => 'Super-Elmar-M 14mm f/3.8 Asph', # ? (ref 16)
     52 => 'Super-Elmar-M 18mm f/3.8 ASPH.', # ? (ref PH/11)
     '53 2' => 'Apo-Telyt-M 135mm f/3.4', #16
+    '53 3' => 'Apo-Summicron-M 50mm f/2 (VI)', #LR
 );
 
 # M9 frame selector bits for each lens
@@ -215,9 +217,11 @@ my %shootingMode = (
     48 => 'Movie', #PH (GM1)
     # 49 - seen for FS4 (snow?)
     51 => 'HDR', #12
+    52 => 'Peripheral Defocus', #Horst Wandres
     55 => 'Handheld Night Shot', #PH (FZ47)
     57 => '3D', #PH (3D1)
     59 => 'Creative Control', #PH (FZ47)
+    60 => 'Intelligent Auto Plus', #20
     62 => 'Panorama', #17
     63 => 'Glass Through', #17
     64 => 'HDR', #17
@@ -264,6 +268,8 @@ my %shootingMode = (
             6 => 'Very High', #3 (Leica)
             7 => 'Raw', #3 (Leica)
             9 => 'Motion Picture', #PH (LZ6)
+            11 => 'Full HD Movie', #PH (V-LUX)
+            12 => '4k Movie', #PH (V-LUX)
         },
     },
     0x02 => {
@@ -332,7 +338,7 @@ my %shootingMode = (
                 '0 1'   => '9-area', # (FS7)
                 '0 16'  => '3-area (high speed)', # (FZ8)
                 '0 23'  => '23-area', #PH (FZ47,NC)
-                # '0 49' - seen for LX100 (PH)
+                '0 49'  => '49-area', #20
                 '1 0'   => 'Spot Focusing', # (FZ8)
                 '1 1'   => '5-area', # (FZ8)
                 '16'    => 'Normal?', # (only mode for DMC-LC20)
@@ -359,6 +365,7 @@ my %shootingMode = (
             5 => 'Panning', #18
             # GF1 also has a "Mode 3" - PH
             6 => 'On, Mode 3', #PH (GX7, sensor shift?)
+            9 => 'Dual IS',  #20
         },
     },
     0x1c => {
@@ -521,6 +528,7 @@ my %shootingMode = (
                 # 0x08 - GX7 in DynamicMonochrome mode
                 0x0d => 'High Dynamic', #PH (FZ47 in ?)
                 # 0x13 - seen for LX100 (PH)
+                # 0x18 - seen for FZ2500 (PH)
                 # DMC-LC1 values:
                 0x100 => 'Low',
                 0x110 => 'Normal',
@@ -605,13 +613,15 @@ my %shootingMode = (
     0x2d => {
         Name => 'NoiseReduction',
         Writable => 'int16u',
+        Notes => 'the encoding for this value is not consistent between models',
         PrintConv => {
             0 => 'Standard',
             1 => 'Low (-1)',
             2 => 'High (+1)',
             3 => 'Lowest (-2)', #JD
             4 => 'Highest (+2)', #JD
-            # 65531 - seen for LX100 "NR1" test shots at imaging-resource (PH)
+            # 65531 - seen for LX100/FZ2500 "NR1" test shots at imaging-resource (PH)
+            #     0 - seen for FZ2500 "NR6D" test shots (PH)
         },
     },
     0x2e => { #4
@@ -622,6 +632,7 @@ my %shootingMode = (
             2 => '10 s',
             3 => '2 s',
             4 => '10 s / 3 pictures', #17
+            # 258 - seen for FZ2500,TZ90 (PH)
         },
     },
     # 0x2f - values: 1 (LZ6,FX10K)
@@ -1083,7 +1094,7 @@ my %shootingMode = (
         Name => 'RollAngle',
         Writable => 'int16u',
         Format => 'int16s',
-        Notes => 'degrees of clockwise camera rotation',
+        Notes => 'converted to degrees of clockwise camera rotation',
         ValueConv => '$val / 10',
         ValueConvInv => '$val * 10',
     },
@@ -1091,7 +1102,7 @@ my %shootingMode = (
         Name => 'PitchAngle',
         Writable => 'int16u',
         Format => 'int16s',
-        Notes => 'degrees of upward camera tilt',
+        Notes => 'converted to degrees of upward camera tilt',
         ValueConv => '-$val / 10',
         ValueConvInv => '-$val * 10',
     },
@@ -1154,6 +1165,14 @@ my %shootingMode = (
         Name => 'TouchAE',
         Writable => 'int16u',
         PrintConv => { 0 => 'Off', 1 => 'On' },
+    },
+    0xaf => { #PH
+        Name => 'TimeStamp',
+        Writable => 'string',
+        Groups => { 2 => 'Time' },
+        Shift => 'Time',
+        PrintConv => '$self->ConvertDateTime($val)',
+        PrintConvInv => '$self->InverseDateTime($val)',
     },
     0x0e00 => {
         Name => 'PrintIM',
@@ -1600,6 +1619,7 @@ my %shootingMode = (
         Count => 4,
         PrintConv => {
             '0 0 0 0' => 'Program AE',
+          # '0 1 0 0' - seen for X (Typ 113) - PH
             '1 0 0 0' => 'Aperture-priority AE',
             '1 1 0 0' => 'Aperture-priority AE (1)', # (see for Leica T)
             '2 0 0 0' => 'Shutter speed priority AE', #(guess)
@@ -1614,6 +1634,16 @@ my %shootingMode = (
     # 0x0411 - int8u[4]: first number is FilmMode (1=Standard,2=Vivid,3=Natural,4=BW Natural,5=BW High Contrast)
     0x0412 => { Name => 'FilmMode',         Writable => 'string' },
     0x0413 => { Name => 'WB_RGBLevels',     Writable => 'rational64u', Count => 3 },
+    0x0500 => {
+        Name => 'InternalSerialNumber',
+        Writable => 'undef',
+        PrintConv => q{
+            return $val unless $val=~/^(.{3})(\d{2})(\d{2})(\d{2})(\d{4})/;
+            my $yr = $2 + ($2 < 70 ? 2000 : 1900);
+            return "($1) $yr:$3:$4 no. $5";
+        },
+        PrintConvInv => '$_=$val; tr/A-Z0-9//dc; s/(.{3})(19|20)/$1/; $_',
+    },
 );
 
 # Leica type5 ShotInfo (ref PH) (X2)
@@ -1642,6 +1672,7 @@ my %shootingMode = (
     },
     0x300 => {
         Name => 'PreviewImage',
+        Groups => { 2 => 'Preview' },
         Writable => 'undef',
         Notes => 'S2 and M (Typ 240)',
         DataTag => 'PreviewImage',
@@ -1660,14 +1691,22 @@ my %shootingMode = (
         Notes => 'unknown 320kB block, not copied to JPEG images',
         Flags => [ 'Unknown', 'Binary', 'Drop' ],
     },
-    # 0x302 - same value as 4 unknown bytes at the end of JPEG or after the DNG TIFF header
+    # 0x302 - same value as 4 unknown bytes at the end of JPEG or after the DNG TIFF header (ImageID, ref IB)
     0x303 => {
         Name => 'LensType',
         Writable => 'string',
         ValueConv => '$val=~s/ +$//; $val', # trim trailing spaces
         ValueConvInv => '$val',
     },
-    # 0x340 - same as 0x302
+    # 0x340 - same as 0x302 (ImageID, ref IB)
+);
+
+# Leica type9 maker notes (ref PH) (S)
+%Image::ExifTool::Panasonic::Leica9 = (
+    WRITE_PROC => \&Image::ExifTool::Exif::WriteExif,
+    CHECK_PROC => \&Image::ExifTool::Exif::CheckExif,
+    GROUPS => { 0 => 'MakerNotes', 1 => 'Leica', 2 => 'Camera' },
+    NOTES => 'This information is written by the Leica S (Typ 007).',
 );
 
 # Type 2 tags (ref PH)
@@ -1899,6 +1938,7 @@ my %shootingMode = (
     0x5c => {
         Name => 'ThumbnailImage',
         Condition => '$$self{ThumbType} == 1',
+        Groups => { 2 => 'Preview' },
         Format => 'undef[16384]',
         ValueConv => '$val=~s/\0*$//; \$val',   # remove trailing zeros
     },
@@ -1923,6 +1963,7 @@ my %shootingMode = (
     0x546 => { # (Leica X VARIO)
         Name => 'ThumbnailImage',
         Condition => '$$self{ThumbType} == 2',
+        Groups => { 2 => 'Preview' },
         Format => 'undef[$val{0x53e}]',
         Binary => 1,
     },
@@ -1945,6 +1986,7 @@ my %shootingMode = (
     0x55e => { # (Leica T)
         Name => 'ThumbnailImage',
         Condition => '$$self{ThumbType} == 3',
+        Groups => { 2 => 'Preview' },
         Format => 'undef[$val{0x556}]',
         Binary => 1,
     },
@@ -1997,6 +2039,8 @@ my %shootingMode = (
             },
             Notes => 'A Composite tag derived from Model, SceneMode and AdvancedSceneType.',
             '0 1' => 'Off',
+            # '0 7' - seen this for V-LUX movies (PH)
+            # '0 8' - seen for D-LUX(Typ104) movies (PH)
             '2 2' => 'Outdoor Portrait', #(FZ28)
             '2 3' => 'Indoor Portrait', #(FZ28)
             '2 4' => 'Creative Portrait', #(FZ28)
@@ -2047,6 +2091,7 @@ my %shootingMode = (
             '90 8' => 'Monochrome', #PH (GX7)
             '90 9' => 'Rough Monochrome', #PH (GX7)
             '90 10' => 'Silky Monochrome', #PH (GX7)
+            '92 1' => 'Handheld Night Shot', #Horst Wandres (FZ1000)
             # TZ40 Creative Control modes (ref 19)
             'DMC-TZ40 90 1' => 'Expressive',
             'DMC-TZ40 90 2' => 'Retro',
@@ -2318,7 +2363,7 @@ Panasonic and Leica maker notes in EXIF information.
 
 =head1 AUTHOR
 
-Copyright 2003-2014, Phil Harvey (phil at owl.phy.queensu.ca)
+Copyright 2003-2018, Phil Harvey (phil at owl.phy.queensu.ca)
 
 This library is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
